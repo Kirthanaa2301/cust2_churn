@@ -1,22 +1,31 @@
+from fastapi import FastAPI, UploadFile, File
 import pandas as pd
 import pickle
-import json
-from fastapi import FastAPI, UploadFile
-import uvicorn
-
 from preprocessing_utils import preprocess_churn_data
-
-model = pickle.load(open("model.pkl", "rb"))
-scaler = pickle.load(open("scaler.pkl", "rb"))
-encoders = pickle.load(open("encoders.pkl", "rb"))
-expected_columns = json.load(open("expected_columns.json"))
 
 app = FastAPI(title="Customer Churn Prediction API")
 
+# Load model, scaler, encoders, expected columns
+with open("model.pkl", "rb") as f:
+    model = pickle.load(f)
+
+with open("scaler.pkl", "rb") as f:
+    scaler = pickle.load(f)
+
+with open("encoders.pkl", "rb") as f:
+    encoders = pickle.load(f)
+
+import json
+with open("expected_columns.json", "r") as f:
+    expected_columns = json.load(f)
+
+
 @app.post("/predict")
-async def predict(file: UploadFile):
+async def predict(file: UploadFile = File(...)):
+    # Read uploaded CSV
     df = pd.read_csv(file.file)
 
+    # Preprocess
     X_processed, _, _, _, customer_ids, _ = preprocess_churn_data(
         df,
         is_train=False,
@@ -25,15 +34,18 @@ async def predict(file: UploadFile):
         expected_columns=expected_columns
     )
 
-    predictions = model.predict(X_processed)
+    # Make predictions
+    model_predictions = model.predict(X_processed)
 
-    output = pd.DataFrame({
+    # Prepare predictions DataFrame
+    predictions = pd.DataFrame({
         "CustomerID": customer_ids,
-        "ChurnPrediction": predictions
+        "PredictedChurn": model_predictions
     })
 
-    return output.to_dict(orient="records")
+    # Save full predictions to CSV
+    predictions.to_csv("predictions.csv", index=False)
 
-
-if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000)
+    # Return small preview to Swagger (first 10 rows)
+    return {"predictions_preview": predictions.head(10).to_dict(orient="records"),
+            "message": "Full predictions saved to predictions.csv"}
